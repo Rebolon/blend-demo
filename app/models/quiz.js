@@ -1,8 +1,9 @@
-// The Quiz model
-// ==============
+// Quiz model
+// ==========
 
-var db      = require('./db');
-var _       = require('underscore');
+'use strict';
+
+var db = require('./db');
 
 var Quiz = db.define('quiz', {
   title:        { type: db.types.STRING, allowNull: false, unique: true,
@@ -17,11 +18,16 @@ var Quiz = db.define('quiz', {
   instanceMethods: {
     // Helper method to get the next available position for a new question in a quiz
     getNextQuestionPosition: function getNextQuestionPosition() {
-      return Quiz.daoFactoryManager.sequelize.getQueryInterface().rawSelect('questions', {
-        attributes: [['MAX(position) + 1', 'maxPos']],
-        where: { quizId: this.id },
-        parseInt: true
-      }, 'maxPos');
+      return Quiz.daoFactoryManager.sequelize.query(
+        'SELECT MAX(position) + 1 AS maxPos FROM questions WHERE quizId = :id', null,
+        { raw: true, plain: true }, { id: this.id }).then(function(h) { return h.maxPos; });
+    },
+
+    getQuestionCount: function getQuestionCount() {
+      return Quiz.daoFactoryManager.sequelize.query(
+        'SELECT COUNT(id) AS qCount FROM questions WHERE quizId = :id', null,
+        { raw: true, plain: true }, { id: this.id })
+      .then(function(h) { return h.qCount; });
     },
 
     isCurrent: function isCurrent() {

@@ -1,19 +1,28 @@
 {
-  "name": "blend-demo",
-  "version": "0.0.1",
-  "description": "A wide-range demo of Node.js capabilities for the 2013 BLEND conference in Lyon",
+  "name": "node-demo",
+  "version": "0.0.4",
+  "description": "A wide-range demo of Node.js capabilities for Node conference sessions",
+  "engines": {
+    "node": "~0.10.20"
+  },
   "private": true,
   "dependencies": {
     "async": "~0.2.9",
     "colors": "~0.6.2",
-    "express": "~3.4.0",
+    "express": "~4.0.0",
+    "morgan": "~1.0.0",
+    "body-parser": "~1.0.0",
+    "cookie-session": "~1.0.0",
+    "method-override": "~1.0.0",
+    "errorhandler": "~1.0.0",
+    "connect-flash": "~0.1.1",
     "jade": "~0.35.0",
     "marked-man": "0.0.2",
     "mkdirp": "~0.3.5",
     "optimist": "~0.6.0",
     "redis": "~0.8.4",
     "request": "~2.27.0",
-    "socket.io": "~0.9.16",
+    "socket.io": "latest",
     "underscore": "~1.5.2",
     "passport-twitter": "~1.0.1",
     "passport": "~0.1.17",
@@ -22,10 +31,11 @@
     "hiredis": "~0.1.15",
     "express-namespace": "~0.1.1",
     "sequelize": "~2.0.0-beta.0",
-    "connect-flash": "~0.1.1",
     "moment": "~2.2.1",
     "promise": "~3.2.0",
-    "johnny-five": "~0.7.3"
+    "johnny-five": "~0.7.3",
+    "marked": "~0.3.0",
+    "csurf": "^1.0.0"
   },
   "devDependencies": {
     "coffee-script": "~1.6.3",
@@ -40,15 +50,18 @@
   },
   "readmeFilename": "README.md",
   "scripts": {
-    "start": "nodemon --debug --watch app --ext js app/app.js",
-    "test": "mocha -R spec"
+    "start": "nodemon app/app.js",
+    "debug": "nodemon --debug app/app.js",
+    "front": "brunch build",
+    "doc": "groc",
+    "test": "mocha"
   },
   "repository": {
     "type": "git",
-    "url": "git@github.com:tdd/blend-demo.git"
+    "url": "git@github.com:tdd/node-demo.git"
   },
-  "bin": ".bin/blend-demo",
-  "man": "docs/blend-demo.1",
+  "bin": ".bin/node-demo",
+  "man": "docs/node-demo.1",
   "keywords": [
     "demo",
     "blend",
@@ -61,6 +74,6 @@
   "author": "Christophe Porteneuve <christophe@delicious-insights.com>",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/tdd/blend-demo/issues"
+    "url": "https://github.com/tdd/node-demo/issues"
   }
 }

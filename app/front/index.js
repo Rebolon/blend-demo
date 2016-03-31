@@ -1,12 +1,12 @@
-// Frontoffice sub-app for quiz running
-// ------------------------------------
+// Front sub-app for quiz running
+// ==============================
+
+'use strict';
 
 var fs              = require('fs');
 var passport        = require('passport');
 var path            = require('path');
 var TwitterStrategy = require('passport-twitter').Strategy;
-var Sequelize       = require('sequelize');
-var Quiz            = require('../models/quiz');
 var engine          = require('../engine');
 var _               = require('underscore');
 var io              = require('socket.io');
@@ -23,41 +23,35 @@ var OAUTH_CALLBACK_PATH = '/ohai';
 // any further middleware once a route is registered, this behaves in two
 // modes: middleware (non-route) and route (non-middleware).  Calling it
 // without a mode (or with an invalid mode) does everything.
-function frontOfficeApp(app, mode, server) {
-  // Middleware-only or generic context
-  if ('routes' !== mode) {
-    bindWebSockets(server);
+function frontOfficeApp(app, server) {
+  bindWebSockets(server);
 
-    // Subapp-local view path
-    app.use('/front', function useLocalViews(req, res, next) {
-      app.set('views', path.join(__dirname, 'views'));
-      next();
-    });
-  }
+  // Subapp-local view path
+  app.use('/front', function useLocalViews(req, res, next) {
+    app.set('views', path.join(__dirname, 'views'));
+    next();
+  });
 
-  // Routes-only or generic context
-  if ('middleware' !== mode) {
-    // Root access should redirect to the frontoffice subapp
-    app.all('/', function(req, res) {
-      res.redirect(301, '/front');
-    });
+  // Root access should redirect to the frontoffice subapp
+  app.all('/', function(req, res) {
+    res.redirect(301, '/front');
+  });
 
-    // Namespaced quiz running routes
-    app.namespace('/front', function() {
-      app.get('/', mainPage);
+  // Namespaced quiz running routes
+  app.namespace('/front', function() {
+    app.get('/', mainPage);
 
-      // Subapp authentication (using a previously registered Twitter strategy,
-      // see the bottom of this file)
-      app.get('/auth', passport.authenticate('twitter'));
+    // Subapp authentication (using a previously registered Twitter strategy,
+    // see the bottom of this file)
+    app.get('/auth', passport.authenticate('twitter'));
 
-      // OAuth callback for the Twitter strategy
-      app.get(OAUTH_CALLBACK_PATH, passport.authenticate('twitter', {
-        successRedirect: '/front',
-        failureFlash: true,
-        failureRedirect: '/front'
-      }));
-    });
-  }
+    // OAuth callback for the Twitter strategy
+    app.get(OAUTH_CALLBACK_PATH, passport.authenticate('twitter', {
+      successRedirect: '/front',
+      failureFlash: true,
+      failureRedirect: '/front'
+    }));
+  });
 }
 
 // Action: main page (initial rendering)
@@ -81,7 +75,6 @@ function mainPage(req, res) {
 // between WS traffic and the engine (both ways).
 function bindWebSockets(server) {
   var sio = io.listen(server);
-  sio.set('log level', 2);
 
   // Convenience forwarder when the WS "event" is exactly the same
   // as the engine-emitted event.
@@ -163,7 +156,8 @@ readCredentials(function(creds) {
   console.log('OAuth callback IP', localIP);
 
   passport.use(new TwitterStrategy(
-    _.extend(creds, { callbackURL: 'http://' + localIP + ':3000/front' + OAUTH_CALLBACK_PATH }),
+    _.extend(creds, { callbackURL: '/front' + OAUTH_CALLBACK_PATH }),
+    // _.extend(creds, { callbackURL: 'http://node-francejs.' + localIP + '.xip.io/front' + OAUTH_CALLBACK_PATH }),
     function(token, tokenSecret, profile, done) {
       var user = {
         id: profile.id,

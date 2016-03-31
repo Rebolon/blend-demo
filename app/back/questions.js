@@ -1,5 +1,5 @@
-// Backoffice sub-app for question management (inside quizzes)
-// -----------------------------------------------------------
+// Backoffice sub-app: question mgmt
+// =================================
 
 var Question = require('../models/question');
 var Answer = require('../models/answer');
@@ -14,39 +14,32 @@ module.exports = questionsApp;
 // any further middleware once a route is registered, this behaves in two
 // modes: middleware (non-route) and route (non-middleware).  Calling it
 // without a mode (or with an invalid mode) does everything.
-function questionsApp(app, mode) {
-  // Middleware-only or generic context
-  if ('routes' !== mode) {
+function questionsApp(app) {
+  // Subapp model checking, so we have `req.question` whenever relevant.
+  app.use('/admin/quizzes', function checkQuestionModel(req, res, next) {
+    var questionId = (req.url.match(/\/questions\/(\d+)\b/) || [])[1];
+    if (undefined === questionId)
+      return next();
 
-    // Subapp model checking, so we have `req.question` whenever relevant.
-    app.use('/admin/quizzes', function checkQuestionModel(req, res, next) {
-      var questionId = (req.url.match(/\/questions\/(\d+)\b/) || [])[1];
-      if (undefined === questionId)
-        return next();
-
-      req.quiz.getQuestions({ where: { 'questions.id': questionId }, include: [Answer], order: 'answers.position' }).success(function(qs) {
-        if (qs.length) {
-          req.question = qs[0];
-          next();
-        } else {
-          req.flash('error', 'Cette question est introuvable.');
-          res.redirect('/admin/quizzes/' + req.quiz.id + '/edit');
-        }
-      });
+    req.quiz.getQuestions({ where: { 'questions.id': questionId }, include: [Answer], order: 'answers.position' }).success(function(qs) {
+      if (qs.length) {
+        req.question = qs[0];
+        next();
+      } else {
+        req.flash('error', 'Cette question est introuvable.');
+        res.redirect('/admin/quizzes/' + req.quiz.id + '/edit');
+      }
     });
-  }
+  });
 
-  // Route-only or generic context
-  if ('middleware' !== mode) {
-    // Namespaced routes (REST resource routes, basically)
-    app.namespace('/:quiz_id/questions', function() {
-      app.get( '/new',      newQuestion);
-      app.post('/',         createQuestion);
-      app.get( '/:id/edit', editQuestion);
-      app.put( '/:id',      updateQuestion);
-      app.del( '/:id',      deleteQuestion);
-    });
-  }
+  // Namespaced routes (REST resource routes, basically)
+  app.namespace('/admin/quizzes/:quiz_id/questions', function() {
+    app.get( '/new',      newQuestion);
+    app.post('/',         createQuestion);
+    app.get( '/:id/edit', editQuestion);
+    app.put( '/:id',      updateQuestion);
+    app.del( '/:id',      deleteQuestion);
+  });
 }
 
 // Quiz resource actions
@@ -59,7 +52,7 @@ function createQuestion(req, res) {
   // We sequence methods (async or not) here using promises.  The error case is
   // handled by passing the last `.then` call a second callback.
   req.quiz.getNextQuestionPosition()
-    .then(function(nextPos) { question.position = nextPos; })
+    .then(function(nextPos) { question.position = nextPos || 1; })
     .then(function() { return question.save(); })
     .then(function() {
       if (saveAnswers(question, req.body.answers)) {
@@ -74,6 +67,7 @@ function createQuestion(req, res) {
         answers: buildAnswers(req.body.answers),
         quiz: req.quiz,
         question: question,
+        Question: Question,
         title: 'Nouvelle question',
         breadcrumbs: buildBreadcrumbs(req.quiz)
       });
@@ -93,6 +87,7 @@ function editQuestion(req, res) {
   res.render('questions/edit', {
     quiz: req.quiz,
     question: req.question,
+    Question: Question,
     answers: buildAnswers(req.question.answers),
     title: req.question.title,
     breadcrumbs: buildBreadcrumbs(req.quiz, req.question)
@@ -106,6 +101,7 @@ function newQuestion(req, res) {
     answers: buildAnswers([]),
     quiz: req.quiz,
     question: question,
+    Question: Question,
     title: 'Nouvelle question',
     breadcrumbs: buildBreadcrumbs(req.quiz)
   });
@@ -130,6 +126,7 @@ function updateQuestion(req, res) {
         answers: buildAnswers(req.body.answers),
         quiz: req.quiz,
         question: question,
+        Question: Question,
         title: question.title,
         breadcrumbs: buildBreadcrumbs(req.quiz, question)
       });
@@ -139,7 +136,7 @@ function updateQuestion(req, res) {
 // Inlined answers management
 // --------------------------
 
-var MIN_PROPOSED_ANSWERS = 4;
+var MIN_PROPOSED_ANSWERS = 6;
 var MIN_BLANKED_ANSWERS  = 2;
 
 var RE_BLANK = /^\s*$/;

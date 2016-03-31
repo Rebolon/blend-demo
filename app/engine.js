@@ -1,8 +1,9 @@
-// The quiz running engine (business logic)
-// ========================================
+// Quiz-running engine
+// ===================
+
+'use strict';
 
 var Quiz      = require('./models/quiz');
-var Question  = require('./models/question');
 var Answer    = require('./models/answer');
 var redis     = require('redis').createClient();
 var _         = require('underscore');
@@ -15,11 +16,10 @@ var Promise   = require('promise');
 // Persistence keys in the Redis store
 // -----------------------------------
 
-var AUTH_PERSIST_KEY  = 'blend-demo:ips-to-users';
-var CUR_QUESTION_KEY  = 'blend-demo:current-question';
-var PLAYERS_KEY       = 'blend-demo:players';
-var SCOREBOARD_KEY    = 'blend-demo:score-board';
-var USER_LIST_KEY     = 'blend-demo:users';
+var CUR_QUESTION_KEY  = 'node-demo:current-question';
+var PLAYERS_KEY       = 'node-demo:players';
+var SCOREBOARD_KEY    = 'node-demo:score-board';
+var USER_LIST_KEY     = 'node-demo:users';
 
 // The Engine singleton
 // --------------------
@@ -33,6 +33,8 @@ var Engine = _.extend(new events.EventEmitter(), {
   currentQuestion: null,
   currentQuestionExpiresAt: 0,
   currentQuestionTimer: null,
+  questionCount: 0,
+  questionIndex: 0,
   playerCount: 'Aucun joueur',
   startedAt: 0,
 
@@ -46,52 +48,45 @@ var Engine = _.extend(new events.EventEmitter(), {
   // dev, when the server auto-restarts at every code change.
   checkAuth: function(req, res, next) {
     var user = req.user;
+
+    if (!user) {
+      res.redirect(302, '/front/auth');
+      return;
+    }
+
     var self = this;
 
-    if (user) {
-      handleUser(user);
-    } else {
-      redis.hget(AUTH_PERSIST_KEY, req.ip, handleRedisUser);
-    }
+    var json = JSON.stringify(user), origScore;
+    // Notice the use of [`async.waterfall`](https://github.com/caolan/async#waterfall)
+    // here.  We make heavy use of that trick to chain multiple traditional (non-promise)
+    // async call whose results feed into each other (at least for some of the calls).
+    // This is one way of avoiding the “Pyramid of Doom” effect.
+    async.waterfall([
+      // 1. persist the current user in the players-scored-by-join-time sorted set.
+      // Use their existing score, if any, to avoid bumping them to the end of the
+      // list once they've joined in.
+      function(cb)   { redis.zscore(USER_LIST_KEY, json, cb); },
+      function(score, cb) { redis.zadd(USER_LIST_KEY, (origScore = score) || Date.now(), json, cb); },
+      // 2. Check the amount of players to maintain our `playerCount` textual state.
+      function(foo, cb)   { redis.zcard(USER_LIST_KEY, cb); },
+      function(count, cb) {
+        self.playerCount = count <= 0 ? 'Aucun joueur' : (1 === count ? 'Un joueur' : count + ' joueurs');
+        if (self.currentQuiz && !self.isRunning() && !origScore)
+          self.emit('quiz-join', user, self.playerCount);
+        cb();
+      },
+      // This is a middleware: don't forget to pass on control to the
+      // remainder of the stack once we're done.
+      next
+    ]);
+  },
 
-    function handleUser(user) {
-      var json = JSON.stringify(user), origScore;
-      // Notice the use of [`async.waterfall`](https://github.com/caolan/async#waterfall)
-      // here.  We make heavy use of that trick to chain multiple traditional (non-promise)
-      // async call whose results feed into each other (at least for some of the calls).
-      // This is one way of avoiding the “Pyramid of Doom” effect.
-      async.waterfall([
-        // 1: persist the current user in the IP-to-player map
-        function(cb)        { redis.hset(AUTH_PERSIST_KEY, req.ip, json, cb); },
-        // 3. persist the current user in the players-scored-by-join-time sorted set.
-        // Use their existing score, if any, to avoid bumping them to the end of the
-        // list once they've joined in.
-        function(foo, cb)   { redis.zscore(USER_LIST_KEY, json, cb); },
-        function(score, cb) { redis.zadd(USER_LIST_KEY, (origScore = score) || Date.now(), json, cb); },
-        // 4. Check the amount of players to maintain our `playerCount` textual state.
-        function(foo, cb)   { redis.zcard(USER_LIST_KEY, cb); },
-        function(count, cb) {
-          self.playerCount = count <= 0 ? 'Aucun joueur' : (1 == count ? 'Un joueur' : count + ' joueurs');
-          if (self.currentQuiz && !self.isRunning() && !origScore)
-            self.emit('quiz-join', user, self.playerCount);
-          cb();
-        },
-        // This is a middleware: don't forget to pass on control to the
-        // remainder of the stack once we're done.
-        next
-      ]);
-    }
-
-    // Tiny callback when our user wasn't found in the session and we looked
-    // them up in the Redis store.
-    function handleRedisUser(err, json) {
-      if (!json)
-        res.redirect(302, '/front/auth');
-      else {
-        req.user = JSON.parse(json);
-        handleUser(req.user);
-      }
-    }
+  resetUsers: function resetUsers(cb) {
+    async.map(
+      [CUR_QUESTION_KEY, PLAYERS_KEY, SCOREBOARD_KEY, USER_LIST_KEY],
+      redis.del.bind(redis),
+      cb
+    );
   },
 
   // Scoreboard computation on quiz end
@@ -103,7 +98,7 @@ var Engine = _.extend(new events.EventEmitter(), {
   // ranked separately (just being lazy here) in no particular order
   // amongst them.
   computeScoreboard: function computeScoreboard(cb) {
-    var self = this, players;
+    var players;
     // `async.waterfall` again, as we have a number of async steps
     // feeding into each other.
     async.waterfall([
@@ -316,7 +311,7 @@ var Engine = _.extend(new events.EventEmitter(), {
 
     // Next-question selector logic.  We build up selecting options for the ORM.
 
-    var opts = { where: { visible: true }, order: 'questions.position, answers.position',
+    var opts = { where: { visible: true }, order: 'question.position, answers.position',
       limit: 1, include: [Answer] };
 
     // If we run on a randomized quiz, starting it picked a random, one-time ordering
@@ -341,6 +336,7 @@ var Engine = _.extend(new events.EventEmitter(), {
       if (question) {
         // There IS a next question matching our criteria?  Awesome, adjust state, persist
         // in Redis and get on with it!
+        ++self.questionIndex;
         self.currentQuestion = question;
         self.currentQuestionExpiresAt = Date.now() + question.duration * 1000;
         self.currentQuestion.expiresAt = self.currentQuestionExpiresAt;
@@ -351,7 +347,8 @@ var Engine = _.extend(new events.EventEmitter(), {
           remaining: question.duration * 1000
         });
         log('info', 'Question starts: ' + question.title + ' (' + question.duration + 's)');
-        self.emit('question-start', question, self.currentQuestionExpiresAt);
+        self.emit('question-start', question, self.currentQuestionExpiresAt,
+          self.questionIndex, self.questionCount);
       } else {
         // There ISN'T any question left for our criteria: the quiz is done, wrap it up.
         self.wrapUp();
@@ -390,7 +387,7 @@ var Engine = _.extend(new events.EventEmitter(), {
 
   // A convenience state resetter for quiz and question starts.
   reset: function reset(mode) {
-    if ('quiz' == mode) {
+    if ('quiz' === mode) {
       this.currentQuiz = null;
       this.startedAt = 0;
       redis.del(PLAYERS_KEY);
@@ -398,7 +395,7 @@ var Engine = _.extend(new events.EventEmitter(), {
     clearTimeout(this.currentQuestionTimer);
     delete this.questionIds;
     this.currentQuestion = this.currentQuestionTimer = null;
-    this.currentQuestionExpiresAt = 0;
+    this.currentQuestionExpiresAt = this.currentQuestionIndex = this.questionCount = 0;
 
     return this;
   },
@@ -409,24 +406,28 @@ var Engine = _.extend(new events.EventEmitter(), {
   // Once a quiz, post-init, has garnered enough players, we can officially start it.
   // For randomized quizzes, this defines a one-shot, random ordering of questions.
   // Then this delegates to `nextQuestion` to pop the first question and get going.
-  start: function start(callback) {
+  start: function start() {
     this.startedAt = Date.now();
     this.reset('question');
+    this.questionIndex = 0;
+    var self = this;
 
     if ('random' !== this.currentQuiz.runningMode) {
       log('info', 'Quiz starts (sequential)');
-      return this.nextQuestion();
+      return this.currentQuiz.getQuestionCount().then(function(qCount) {
+        self.questionCount = qCount;
+      }).then(this.nextQuestion);
+    } else {
+      // Notice the two chained `.then` calls, that let us sequence asynchronous
+      // functions the way we need them.  For Sequelize calls, `.then` calls are triggered
+      // on success cases.
+      return this.currentQuiz.getQuestions({ where: { visible: true } }).then(function(qs) {
+        // Gotta love Underscore…
+        self.questionIds = _.chain(qs).pluck('id').shuffle().value();
+        self.questionCount = qs.length;
+        log('info', 'Quiz starts (randomized to ' + self.questionIds.join() + ')');
+      }).then(this.nextQuestion);
     }
-
-    var self = this;
-    // Notice the two chained `.then` calls, that let us sequence asynchronous
-    // functions the way we need them.  For Sequelize calls, `.then` calls are triggered
-    // on success cases.
-    return this.currentQuiz.getQuestions({ where: { visible: true } }).then(function(qs) {
-      // Gotta love Underscore…
-      self.questionIds = _.chain(qs).pluck('id').shuffle().value();
-      log('info', 'Quiz starts (randomized to ' + self.questionIds.join() + ')');
-    }).then(self.nextQuestion);
   },
 
   // A convenience method called when a question ends, to increment the scores of every
